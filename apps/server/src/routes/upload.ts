@@ -1,25 +1,20 @@
 import type { FastifyInstance } from "fastify";
-import type { MultipartFields } from "@fastify/multipart";
 import { aggregate } from "../pipeline/aggregate.js";
 import { categorizeTransactions } from "../pipeline/categorize.js";
 import { extractTransactions, type StatementFile } from "../pipeline/extractTransactions.js";
 import { verifyExtraction } from "../pipeline/verifyExtraction.js";
-import { writeSheet, type DriveTarget } from "../pipeline/writeSheet.js";
 import { PipelineError } from "../errors.js";
+import { createJob } from "../jobStore.js";
+import type { CategorizedTransaction } from "../types.js";
+import type { PendingTransaction, ProgressEvent } from "../progressEvents.js";
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_FILES = 10;
-
-function readMultipartField(fields: MultipartFields, name: string): string | undefined {
-  const field = fields[name];
-  if (field && !Array.isArray(field) && field.type === "field") return String(field.value);
-  return undefined;
-}
+const PING_INTERVAL_MS = 15000;
 
 export async function registerUploadRoute(app: FastifyInstance): Promise<void> {
   app.post("/upload", async (request, reply) => {
     const files: StatementFile[] = [];
-    let lastFields: MultipartFields | undefined;
 
     for await (const part of request.files({ limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES } })) {
       if (part.mimetype !== "application/pdf") {
@@ -27,38 +22,80 @@ export async function registerUploadRoute(app: FastifyInstance): Promise<void> {
       }
       const buffer = await part.toBuffer();
       files.push({ filename: part.filename, base64: buffer.toString("base64") });
-      lastFields = part.fields;
     }
 
     if (files.length === 0) {
       return reply.code(400).send({ ok: false, stage: "validation", error: "No PDF files were uploaded" });
     }
 
-    const driveFolderId = lastFields ? readMultipartField(lastFields, "driveFolderId") : undefined;
-    const driveAccessToken = lastFields ? readMultipartField(lastFields, "driveAccessToken") : undefined;
-    const driveTarget: DriveTarget | undefined =
-      driveFolderId && driveAccessToken ? { folderId: driveFolderId, accessToken: driveAccessToken } : undefined;
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    });
+
+    const send = (event: ProgressEvent) => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    const keepAlive = setInterval(() => {
+      reply.raw.write(": ping\n\n");
+    }, PING_INTERVAL_MS);
 
     try {
-      const extraction = await extractTransactions(files);
-      const [categorized, verificationWarnings] = await Promise.all([
-        categorizeTransactions(extraction.transactions),
-        verifyExtraction(extraction.transactions),
-      ]);
-      const result = aggregate(categorized);
-      const sheetUrl = await writeSheet(categorized, result, driveTarget);
-      return reply.send({
-        ok: true,
-        sheetUrl,
-        warnings: [...extraction.warnings, ...verificationWarnings],
-      });
+      await runPipeline(files, send);
     } catch (err) {
       if (err instanceof PipelineError) {
         request.log.error({ err, stage: err.stage }, "pipeline stage failed");
-        return reply.code(502).send({ ok: false, stage: err.stage, error: err.message });
+        send({ type: "error", stage: err.stage, message: err.message });
+      } else {
+        request.log.error({ err }, "unexpected pipeline failure");
+        send({ type: "error", stage: "unknown", message: "Unexpected server error" });
       }
-      request.log.error({ err }, "unexpected pipeline failure");
-      return reply.code(500).send({ ok: false, stage: "unknown", error: "Unexpected server error" });
+    } finally {
+      clearInterval(keepAlive);
+      reply.raw.end();
     }
   });
+}
+
+async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) => void): Promise<void> {
+  send({ type: "stage_start", stage: "extraction", message: "Reading bank statement PDFs…" });
+  const extraction = await extractTransactions(files, (text) => send({ type: "chat", text }));
+  send({ type: "stage_complete", stage: "extraction" });
+
+  const pending: PendingTransaction[] = extraction.transactions.map((tx) => ({ ...tx, category: null }));
+  send({ type: "transactions_extracted", transactions: pending, warnings: extraction.warnings });
+
+  send({ type: "stage_start", stage: "categorization", message: "Categorizing transactions…" });
+  send({ type: "stage_start", stage: "verification", message: "Double-checking extracted transactions…" });
+
+  const partial: (CategorizedTransaction | undefined)[] = new Array(extraction.transactions.length);
+  const CATEGORIZE_BATCH_SIZE = 20;
+
+  const [categorized, verificationWarnings] = await Promise.all([
+    categorizeTransactions(extraction.transactions, (index, category) => {
+      partial[index] = { ...extraction.transactions[index], category };
+      send({ type: "transaction_categorized", index, category });
+      const isBatchBoundary = (index + 1) % CATEGORIZE_BATCH_SIZE === 0 || index === extraction.transactions.length - 1;
+      if (isBatchBoundary) {
+        const settled = partial.filter((tx): tx is CategorizedTransaction => tx !== undefined);
+        send({ type: "aggregate_update", result: aggregate(settled) });
+      }
+    }),
+    verifyExtraction(extraction.transactions, (_index, warning) => {
+      if (warning) send({ type: "warning", stage: "verification", message: warning });
+    }),
+  ]);
+
+  send({ type: "stage_complete", stage: "categorization" });
+  send({ type: "stage_complete", stage: "verification" });
+
+  const result = aggregate(categorized);
+  send({ type: "aggregate_update", result });
+
+  const warnings = [...extraction.warnings, ...verificationWarnings];
+  const jobId = createJob(categorized, result);
+  send({ type: "done", jobId, transactions: categorized, result, warnings });
 }

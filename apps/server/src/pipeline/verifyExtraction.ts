@@ -8,12 +8,22 @@ const client = new TypeSafeClient({ apiKey: config.typesafeApiKey });
 const CONCURRENCY = 20;
 const PLAUSIBILITY_THRESHOLD = 0.5;
 
-export async function verifyExtraction(transactions: Transaction[]): Promise<string[]> {
+export async function verifyExtraction(
+  transactions: Transaction[],
+  onProgress?: (index: number, warning: string | null) => void,
+): Promise<string[]> {
   const warnings: string[] = [];
 
   for (let i = 0; i < transactions.length; i += CONCURRENCY) {
     const batch = transactions.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(verifyOne));
+    const batchResults = await Promise.all(
+      batch.map((tx, offset) =>
+        verifyOne(tx).then((warning) => {
+          onProgress?.(i + offset, warning);
+          return warning;
+        }),
+      ),
+    );
     for (const warning of batchResults) {
       if (warning) warnings.push(warning);
     }

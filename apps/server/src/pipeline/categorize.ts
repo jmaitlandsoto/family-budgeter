@@ -8,12 +8,22 @@ const client = new TypeSafeClient({ apiKey: config.typesafeApiKey });
 
 const CONCURRENCY = 20;
 
-export async function categorizeTransactions(transactions: Transaction[]): Promise<CategorizedTransaction[]> {
+export async function categorizeTransactions(
+  transactions: Transaction[],
+  onProgress?: (index: number, category: string) => void,
+): Promise<CategorizedTransaction[]> {
   const results: CategorizedTransaction[] = new Array(transactions.length);
 
   for (let i = 0; i < transactions.length; i += CONCURRENCY) {
     const batch = transactions.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(categorizeOne));
+    const batchResults = await Promise.all(
+      batch.map((tx, offset) =>
+        categorizeOne(tx).then((result) => {
+          onProgress?.(i + offset, result.category);
+          return result;
+        }),
+      ),
+    );
     batchResults.forEach((result, offset) => {
       results[i + offset] = result;
     });

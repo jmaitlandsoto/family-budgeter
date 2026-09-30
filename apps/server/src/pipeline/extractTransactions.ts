@@ -43,7 +43,10 @@ async function* buildPrompt(files: StatementFile[]): AsyncGenerator<SDKUserMessa
   };
 }
 
-export async function extractTransactions(files: StatementFile[]): Promise<ExtractionResult> {
+export async function extractTransactions(
+  files: StatementFile[],
+  onNarration?: (text: string) => void,
+): Promise<ExtractionResult> {
   let structuredOutput: unknown;
   let failureReason: string | undefined;
 
@@ -61,6 +64,14 @@ export async function extractTransactions(files: StatementFile[]): Promise<Extra
         structuredOutput = message.structured_output;
       } else {
         failureReason = "errors" in message && message.errors.length > 0 ? message.errors.join("; ") : message.subtype;
+      }
+    } else if (message.type === "assistant") {
+      // Only narrate plain text blocks — thinking blocks are internal reasoning,
+      // not meant for end-user display.
+      for (const block of message.message.content) {
+        if (block.type === "text" && block.text.trim()) {
+          onNarration?.(block.text);
+        }
       }
     }
   }
