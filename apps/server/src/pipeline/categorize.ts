@@ -2,23 +2,29 @@ import { TypeSafeClient, choice, AuthenticationError, PermissionDeniedError, API
 import { config } from "../config.js";
 import { CATEGORY_CRITERIA, DEFAULT_CATEGORY } from "../categories.js";
 import { PipelineError } from "../errors.js";
-import type { Transaction, CategorizedTransaction } from "../types.js";
+import type { Transaction, CategorizedTransaction, TypeSafeStageUsage } from "../types.js";
 
 const client = new TypeSafeClient({ apiKey: config.typesafeApiKey });
 
 const CONCURRENCY = 20;
 
+export interface CategorizeOutcome {
+  transactions: CategorizedTransaction[];
+  usage: TypeSafeStageUsage;
+}
+
 export async function categorizeTransactions(
   transactions: Transaction[],
   onProgress?: (index: number, category: string) => void,
-): Promise<CategorizedTransaction[]> {
+): Promise<CategorizeOutcome> {
   const results: CategorizedTransaction[] = new Array(transactions.length);
+  const usage: TypeSafeStageUsage = { calls: 0, inputTokens: 0, outputTokens: 0 };
 
   for (let i = 0; i < transactions.length; i += CONCURRENCY) {
     const batch = transactions.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(
       batch.map((tx, offset) =>
-        categorizeOne(tx).then((result) => {
+        categorizeOne(tx, usage).then((result) => {
           onProgress?.(i + offset, result.category);
           return result;
         }),
@@ -29,12 +35,12 @@ export async function categorizeTransactions(
     });
   }
 
-  return results;
+  return { transactions: results, usage };
 }
 
-async function categorizeOne(tx: Transaction): Promise<CategorizedTransaction> {
+async function categorizeOne(tx: Transaction, usage: TypeSafeStageUsage): Promise<CategorizedTransaction> {
   try {
-    const { answers } = await client.systemOne({
+    const { answers, usage: callUsage } = await client.systemOne({
       state: { description: tx.description, amount: tx.amount, date: tx.date },
       questions: {
         category: choice(
@@ -43,6 +49,9 @@ async function categorizeOne(tx: Transaction): Promise<CategorizedTransaction> {
         ),
       },
     });
+    usage.calls += 1;
+    usage.inputTokens += callUsage.input_tokens;
+    usage.outputTokens += callUsage.output_tokens;
     return { ...tx, category: answers.category.choice };
   } catch (err) {
     // Systemic failures (bad key, no access, can't reach the service) should abort the

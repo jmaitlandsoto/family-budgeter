@@ -31,3 +31,26 @@ export interface AggregateResult {
   totalExpenses: number;
   net: number;
 }
+
+// Agent SDK reports an actual estimated USD cost per query() call; TypeSafe's
+// systemOne only reports token usage, with no pricing exposed by the SDK, so
+// the categorization/verification stages carry tokens only (no costUsd).
+export interface AgentStageUsage {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
+export interface TypeSafeStageUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface PipelineUsage {
+  extraction: AgentStageUsage;
+  categorization: TypeSafeStageUsage;
+  verification: TypeSafeStageUsage;
+}

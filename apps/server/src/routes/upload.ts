@@ -65,26 +65,27 @@ async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) 
   const extraction = await extractTransactions(files, (text) => send({ type: "chat", text }));
   send({ type: "stage_complete", stage: "extraction" });
 
-  const pending: PendingTransaction[] = extraction.transactions.map((tx) => ({ ...tx, category: null }));
-  send({ type: "transactions_extracted", transactions: pending, warnings: extraction.warnings });
+  const { transactions, warnings: extractionWarnings } = extraction.result;
+  const pending: PendingTransaction[] = transactions.map((tx) => ({ ...tx, category: null }));
+  send({ type: "transactions_extracted", transactions: pending, warnings: extractionWarnings });
 
   send({ type: "stage_start", stage: "categorization", message: "Categorizing transactions…" });
   send({ type: "stage_start", stage: "verification", message: "Double-checking extracted transactions…" });
 
-  const partial: (CategorizedTransaction | undefined)[] = new Array(extraction.transactions.length);
+  const partial: (CategorizedTransaction | undefined)[] = new Array(transactions.length);
   const CATEGORIZE_BATCH_SIZE = 20;
 
-  const [categorized, verificationWarnings] = await Promise.all([
-    categorizeTransactions(extraction.transactions, (index, category) => {
-      partial[index] = { ...extraction.transactions[index], category };
+  const [categorizeOutcome, verifyOutcome] = await Promise.all([
+    categorizeTransactions(transactions, (index, category) => {
+      partial[index] = { ...transactions[index], category };
       send({ type: "transaction_categorized", index, category });
-      const isBatchBoundary = (index + 1) % CATEGORIZE_BATCH_SIZE === 0 || index === extraction.transactions.length - 1;
+      const isBatchBoundary = (index + 1) % CATEGORIZE_BATCH_SIZE === 0 || index === transactions.length - 1;
       if (isBatchBoundary) {
         const settled = partial.filter((tx): tx is CategorizedTransaction => tx !== undefined);
         send({ type: "aggregate_update", result: aggregate(settled) });
       }
     }),
-    verifyExtraction(extraction.transactions, (_index, warning) => {
+    verifyExtraction(transactions, (_index, warning) => {
       if (warning) send({ type: "warning", stage: "verification", message: warning });
     }),
   ]);
@@ -92,10 +93,22 @@ async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) 
   send({ type: "stage_complete", stage: "categorization" });
   send({ type: "stage_complete", stage: "verification" });
 
+  const categorized = categorizeOutcome.transactions;
   const result = aggregate(categorized);
   send({ type: "aggregate_update", result });
 
-  const warnings = [...extraction.warnings, ...verificationWarnings];
+  const warnings = [...extractionWarnings, ...verifyOutcome.warnings];
   const jobId = createJob(categorized, result);
-  send({ type: "done", jobId, transactions: categorized, result, warnings });
+  send({
+    type: "done",
+    jobId,
+    transactions: categorized,
+    result,
+    warnings,
+    usage: {
+      extraction: extraction.usage,
+      categorization: categorizeOutcome.usage,
+      verification: verifyOutcome.usage,
+    },
+  });
 }

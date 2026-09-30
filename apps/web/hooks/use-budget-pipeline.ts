@@ -5,6 +5,7 @@ import type {
   AggregateResult,
   CategorizedTransaction,
   PendingTransaction,
+  PipelineUsage,
   ProgressEvent,
 } from "@/lib/progress-events";
 
@@ -24,6 +25,7 @@ export interface PipelineState {
   warnings: string[];
   jobId: string | null;
   errorMessage: string | null;
+  usage: PipelineUsage | null;
 }
 
 const initialState: PipelineState = {
@@ -34,6 +36,7 @@ const initialState: PipelineState = {
   warnings: [],
   jobId: null,
   errorMessage: null,
+  usage: null,
 };
 
 type Action = { kind: "reset" } | { kind: "event"; event: ProgressEvent };
@@ -95,6 +98,7 @@ function reducer(state: PipelineState, action: Action): PipelineState {
         transactions: event.transactions,
         aggregate: event.result,
         warnings: event.warnings,
+        usage: event.usage,
         chat: [...state.chat, chatEntry("stage", "Done — ready to export.")],
       };
     case "error":

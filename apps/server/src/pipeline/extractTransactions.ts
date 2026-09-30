@@ -1,7 +1,12 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { AgentExtractionError } from "../errors.js";
-import { ExtractionResultSchema, type ExtractionResult } from "../types.js";
+import { ExtractionResultSchema, type AgentStageUsage, type ExtractionResult } from "../types.js";
+
+export interface ExtractionOutcome {
+  result: ExtractionResult;
+  usage: AgentStageUsage;
+}
 
 export interface StatementFile {
   filename: string;
@@ -46,9 +51,16 @@ async function* buildPrompt(files: StatementFile[]): AsyncGenerator<SDKUserMessa
 export async function extractTransactions(
   files: StatementFile[],
   onNarration?: (text: string) => void,
-): Promise<ExtractionResult> {
+): Promise<ExtractionOutcome> {
   let structuredOutput: unknown;
   let failureReason: string | undefined;
+  let usage: AgentStageUsage = {
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+  };
 
   for await (const message of query({
     prompt: buildPrompt(files),
@@ -60,6 +72,23 @@ export async function extractTransactions(
     },
   })) {
     if (message.type === "result") {
+      // modelUsage/total_cost_usd cover the whole query() call (main loop + any
+      // subagent/internal model calls), so this replaces rather than accumulates
+      // across the result messages this single query() emits.
+      usage = {
+        costUsd: message.total_cost_usd,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+      };
+      for (const modelUsage of Object.values(message.modelUsage)) {
+        usage.inputTokens += modelUsage.inputTokens;
+        usage.outputTokens += modelUsage.outputTokens;
+        usage.cacheReadInputTokens += modelUsage.cacheReadInputTokens;
+        usage.cacheCreationInputTokens += modelUsage.cacheCreationInputTokens;
+      }
+
       if (message.subtype === "success") {
         structuredOutput = message.structured_output;
       } else {
@@ -89,5 +118,5 @@ export async function extractTransactions(
     throw new AgentExtractionError(`Extraction agent output did not match the expected schema: ${parsed.error.message}`);
   }
 
-  return parsed.data;
+  return { result: parsed.data, usage };
 }

@@ -1,24 +1,30 @@
 import { TypeSafeClient, noul, AuthenticationError, PermissionDeniedError, APIConnectionError } from "@typesafe-ai/sdk";
 import { config } from "../config.js";
 import { PipelineError } from "../errors.js";
-import type { Transaction } from "../types.js";
+import type { Transaction, TypeSafeStageUsage } from "../types.js";
 
 const client = new TypeSafeClient({ apiKey: config.typesafeApiKey });
 
 const CONCURRENCY = 20;
 const PLAUSIBILITY_THRESHOLD = 0.5;
 
+export interface VerifyOutcome {
+  warnings: string[];
+  usage: TypeSafeStageUsage;
+}
+
 export async function verifyExtraction(
   transactions: Transaction[],
   onProgress?: (index: number, warning: string | null) => void,
-): Promise<string[]> {
+): Promise<VerifyOutcome> {
   const warnings: string[] = [];
+  const usage: TypeSafeStageUsage = { calls: 0, inputTokens: 0, outputTokens: 0 };
 
   for (let i = 0; i < transactions.length; i += CONCURRENCY) {
     const batch = transactions.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(
       batch.map((tx, offset) =>
-        verifyOne(tx).then((warning) => {
+        verifyOne(tx, usage).then((warning) => {
           onProgress?.(i + offset, warning);
           return warning;
         }),
@@ -29,12 +35,12 @@ export async function verifyExtraction(
     }
   }
 
-  return warnings;
+  return { warnings, usage };
 }
 
-async function verifyOne(tx: Transaction): Promise<string | null> {
+async function verifyOne(tx: Transaction, usage: TypeSafeStageUsage): Promise<string | null> {
   try {
-    const { answers } = await client.systemOne({
+    const { answers, usage: callUsage } = await client.systemOne({
       state: { date: tx.date, description: tx.description, amount: tx.amount },
       questions: {
         plausible: noul(
@@ -49,6 +55,10 @@ async function verifyOne(tx: Transaction): Promise<string | null> {
         ),
       },
     });
+
+    usage.calls += 1;
+    usage.inputTokens += callUsage.input_tokens;
+    usage.outputTokens += callUsage.output_tokens;
 
     if (answers.plausible.noul < PLAUSIBILITY_THRESHOLD) {
       const confidencePct = Math.round(answers.plausible.noul * 100);

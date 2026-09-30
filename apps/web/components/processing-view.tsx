@@ -34,7 +34,7 @@ export function ProcessingView({ state, onRetry, onStartOver }: Props) {
       )}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 md:grid-cols-2">
         <div className="min-h-0 rounded-lg border">
-          <ChatPanel entries={state.chat} />
+          <ChatPanel entries={state.chat} usage={state.usage} />
         </div>
         <div className="flex min-h-0 flex-col gap-2">
           <div className="flex items-center justify-between">

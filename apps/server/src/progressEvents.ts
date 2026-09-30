@@ -1,4 +1,4 @@
-import type { AggregateResult, CategorizedTransaction, Transaction } from "./types.js";
+import type { AggregateResult, CategorizedTransaction, PipelineUsage, Transaction } from "./types.js";
 
 export type PipelineStage = "extraction" | "categorization" | "verification";
 
@@ -18,5 +18,6 @@ export type ProgressEvent =
       transactions: CategorizedTransaction[];
       result: AggregateResult;
       warnings: string[];
+      usage: PipelineUsage;
     }
   | { type: "error"; stage: PipelineStage | "sheet_write" | "unknown"; message: string };
