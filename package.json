@@ -1,0 +1,7 @@
+{
+  "name": "family-budgeter",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ]
+}
