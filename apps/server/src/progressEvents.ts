@@ -1,6 +1,6 @@
 import type { AggregateResult, CategorizedTransaction, PipelineUsage, Transaction } from "./types.js";
 
-export type PipelineStage = "extraction" | "categorization" | "verification";
+export type PipelineStage = "ocr" | "extraction" | "categorization" | "verification";
 
 export type PendingTransaction = Transaction & { category: null };
 

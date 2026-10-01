@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A two-person household tool: upload PDF bank statements through a web page,
 get back a Google Sheet with all transactions and a category breakdown. See
-`README.md` for the one-time GCP setup (service account, Sheets sharing) and
-deployment steps — this file is about the code, not the setup.
+`README.md` for the one-time GCP setup (service account, Document AI
+processor, Sheets sharing) and deployment steps — this file is about the
+code, not the setup.
 
 ## Architecture
 
@@ -28,20 +29,30 @@ functions, so the split is:
   which buffers uploaded PDFs in memory (no disk, no database — nothing is
   retained after the response) and runs them through
   `src/pipeline/` in sequence:
-  1. `extractTransactions.ts` — sends the PDF(s) to the Agent SDK's `query()`
-     as `document` content blocks on a single streamed user message, using
-     `outputFormat: { type: 'json_schema' }` to get typed structured output
-     back on the final result message (`structured_output`), rather than a
-     custom tool-call. **Gotcha**: the schema passed here must NOT include a
-     top-level `$schema` key — zod's `toJSONSchema()` adds one by default,
-     and the Claude Code CLI's `--json-schema` flag fails trying to resolve
-     it as a `$ref`. The code strips it before use; don't reintroduce it.
-  2. `categorize.ts` — one TypeSafe (`@typesafe-ai/sdk`) `choice()` call per
+  1. `ocr.ts` — runs each uploaded PDF through Google Document AI's
+     synchronous `processDocument` API (a **Document OCR** processor, not a
+     specialized parser) to get plain text, using the same service-account
+     credentials as `writeSheet.ts`. Empty/unreadable OCR output becomes a
+     warning, not a thrown error; only genuine API/auth failures abort the
+     request. The sync API tops out around 15 pages per file — fine for
+     ordinary statements, not solved further here.
+  2. `extractTransactions.ts` — sends the OCR'd text (not the original PDF)
+     to the Agent SDK's `query()` as plain text content blocks on a single
+     streamed user message, using `outputFormat: { type: 'json_schema' }` to
+     get typed structured output back on the final result message
+     (`structured_output`), rather than a custom tool-call. Uses the `haiku`
+     model alias — cheap is fine here since Document AI already did the hard
+     part; this call only structures already-clean text into JSON.
+     **Gotcha**: the schema passed here must NOT include a top-level
+     `$schema` key — zod's `toJSONSchema()` adds one by default, and the
+     Claude Code CLI's `--json-schema` flag fails trying to resolve it as a
+     `$ref`. The code strips it before use; don't reintroduce it.
+  3. `categorize.ts` — one TypeSafe (`@typesafe-ai/sdk`) `choice()` call per
      transaction, batched with concurrency (not one big call), classifying
      into the fixed list in `categories.ts`.
-  3. `aggregate.ts` — pure function, sums by category and income/expense, no
+  4. `aggregate.ts` — pure function, sums by category and income/expense, no
      external calls.
-  4. `writeSheet.ts` — writes both tabs. If the request includes a
+  5. `writeSheet.ts` — writes both tabs. If the request includes a
      `driveTarget` (a Drive folder id + the end user's own OAuth access
      token, obtained client-side via the Picker button in `upload-form.tsx`),
      it creates a brand-new spreadsheet in that folder using the user's own
@@ -57,7 +68,8 @@ consumed by both the TypeSafe classification criteria and the sheet's row
 order. Change categories there, not anywhere else.
 
 Errors from any pipeline stage are `PipelineError` (`src/errors.ts`), tagged
-with a `stage` (`extraction` | `categorization` | `sheet_write`) that flows
+with a `stage` (`ocr` | `extraction` | `categorization` | `sheet_write` |
+`verification`) that flows
 through to the HTTP error response so the frontend/curl caller knows which
 stage failed. `categorize.ts` distinguishes systemic TypeSafe failures (auth/
 connection — aborts the whole request) from per-item failures (falls back to

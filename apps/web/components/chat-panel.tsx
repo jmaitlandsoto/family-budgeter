@@ -36,6 +36,10 @@ function UsageSummary({ usage }: { usage: PipelineUsage }) {
     <div className="mt-2 rounded-md border bg-muted/40 p-3 text-xs">
       <p className="mb-2 font-medium uppercase tracking-wide text-muted-foreground">Usage & cost</p>
       <div className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-3 gap-y-1.5">
+        <span className="font-medium">OCR</span>
+        <span className="text-muted-foreground">{usage.ocr.pages} pages processed</span>
+        <span className="text-muted-foreground">n/a</span>
+
         <span className="font-medium">Extraction</span>
         <span className="text-muted-foreground">
           {formatTokens(usage.extraction.inputTokens)} in / {formatTokens(usage.extraction.outputTokens)} out tokens

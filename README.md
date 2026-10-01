@@ -25,7 +25,30 @@ a category breakdown. Two apps:
    uploads without picking a Drive folder in the browser. See step 3 below for
    the primary "create a new sheet in a picked folder" path.
 
-### 2. Google Drive folder picker (OAuth)
+### 2. Document AI (OCR)
+
+Bank statement PDFs are OCR'd by Google Document AI before Claude structures
+the text into transactions — this keeps the extraction step cheap (plain
+text instead of PDF/vision input) and makes OCR failures independent of the
+model's own PDF-reading ability.
+
+1. In the same GCP project, enable the **Document AI API**.
+2. Go to **Document AI → Processors** (or `console.cloud.google.com/ai/document-ai`)
+   and create a processor of type **Document OCR** (the generic OCR
+   processor — not a specialized parser; Claude still does the semantic
+   structuring). Pick a region (e.g. `us` or `eu`).
+3. Grant the same service account from step 1 the **Document AI API User**
+   (`roles/documentai.apiUser`) IAM role on the project.
+4. Copy the processor's full resource name — shown on the processor's detail
+   page, of the form
+   `projects/<project-number>/locations/<region>/processors/<processor-id>`
+   — into `DOCUMENT_AI_PROCESSOR_NAME`.
+
+The synchronous OCR API used here tops out around 15 pages per PDF, which
+covers ordinary monthly statements; a statement beyond that surfaces as an
+error rather than being silently truncated.
+
+### 3. Google Drive folder picker (OAuth)
 
 The "Select Google Drive folder" button lets each user create a brand-new
 sheet directly in their own Drive, using their own Google account rather
@@ -50,7 +73,7 @@ config here), so there's no Picker API, API key, or app ID to set up.
    scopes used here. Expect users to see an "unverified app" warning during
    consent and need to click through it — that's expected and fine.
 
-### 3. API keys
+### 4. API keys
 
 - An Anthropic API key (console.anthropic.com) for `ANTHROPIC_API_KEY`.
 - A TypeSafe API key for `TYPESAFE_API_KEY`.
@@ -95,7 +118,7 @@ gcloud run deploy family-budgeter-server \
   --dockerfile apps/server/Dockerfile \
   --region <your-region> \
   --min-instances 1 \
-  --set-env-vars ANTHROPIC_API_KEY=...,TYPESAFE_API_KEY=...,GOOGLE_SHEET_ID=...,BACKEND_API_KEY=... \
+  --set-env-vars ANTHROPIC_API_KEY=...,TYPESAFE_API_KEY=...,GOOGLE_SHEET_ID=...,BACKEND_API_KEY=...,DOCUMENT_AI_PROCESSOR_NAME=... \
   --set-secrets GOOGLE_SERVICE_ACCOUNT_KEY=<secret-name>:latest
 ```
 

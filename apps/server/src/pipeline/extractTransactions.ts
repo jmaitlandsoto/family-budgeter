@@ -2,18 +2,14 @@ import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { AgentExtractionError } from "../errors.js";
 import { ExtractionResultSchema, type AgentStageUsage, type ExtractionResult } from "../types.js";
+import type { OcrPage } from "./ocr.js";
 
 export interface ExtractionOutcome {
   result: ExtractionResult;
   usage: AgentStageUsage;
 }
 
-export interface StatementFile {
-  filename: string;
-  base64: string;
-}
-
-const EXTRACTION_PROMPT = `You are given one or more bank statement PDFs. Extract every transaction from every statement into a single combined list.
+const EXTRACTION_PROMPT = `You are given OCR-extracted text from one or more bank statement PDFs. Extract every transaction from every statement into a single combined list.
 
 For each transaction, record:
 - date (ISO 8601, YYYY-MM-DD)
@@ -22,15 +18,16 @@ For each transaction, record:
 - account (the account name or last 4 digits, if identifiable)
 - sourceFile (the filename this transaction came from)
 
-If a file is a scanned image, unreadable, or not a bank statement, do not guess — add a note to
-"warnings" explaining which file and why, and still extract what you can from the rest.`;
+The OCR text can be garbled, out of order, or missing sections. If a file's text is unreadable,
+empty, or doesn't look like a bank statement, do not guess — add a note to "warnings" explaining
+which file and why, and still extract what you can from the rest.`;
 
 // The Claude Code CLI's --json-schema flag rejects a top-level "$schema" key
 // (it tries to resolve it as a $ref and fails to find a registered schema for
 // the draft URI), so strip the one zod's toJSONSchema() adds by default.
 const { $schema: _unusedSchemaDialect, ...outputJsonSchema } = z.toJSONSchema(ExtractionResultSchema);
 
-async function* buildPrompt(files: StatementFile[]): AsyncGenerator<SDKUserMessage> {
+async function* buildPrompt(pages: OcrPage[]): AsyncGenerator<SDKUserMessage> {
   yield {
     type: "user",
     parent_tool_use_id: null,
@@ -38,10 +35,9 @@ async function* buildPrompt(files: StatementFile[]): AsyncGenerator<SDKUserMessa
       role: "user",
       content: [
         { type: "text", text: EXTRACTION_PROMPT },
-        ...files.map((file) => ({
-          type: "document" as const,
-          source: { type: "base64" as const, media_type: "application/pdf" as const, data: file.base64 },
-          title: file.filename,
+        ...pages.map((page) => ({
+          type: "text" as const,
+          text: `=== ${page.filename} ===\n${page.text}`,
         })),
       ],
     },
@@ -49,7 +45,7 @@ async function* buildPrompt(files: StatementFile[]): AsyncGenerator<SDKUserMessa
 }
 
 export async function extractTransactions(
-  files: StatementFile[],
+  pages: OcrPage[],
   onNarration?: (text: string) => void,
 ): Promise<ExtractionOutcome> {
   let structuredOutput: unknown;
@@ -63,11 +59,14 @@ export async function extractTransactions(
   };
 
   for await (const message of query({
-    prompt: buildPrompt(files),
+    prompt: buildPrompt(pages),
     options: {
       tools: [],
       permissionMode: "bypassPermissions",
       maxTurns: 5,
+      // Document AI already did the OCR; this call only structures clean(ish)
+      // text into JSON, so the cheaper aliased model is sufficient.
+      model: "haiku",
       outputFormat: { type: "json_schema", schema: outputJsonSchema },
     },
   })) {

@@ -1,4 +1,4 @@
-export type PipelineStage = "extraction" | "categorization" | "sheet_write" | "verification";
+export type PipelineStage = "ocr" | "extraction" | "categorization" | "sheet_write" | "verification";
 
 export class PipelineError extends Error {
   readonly stage: PipelineStage;
@@ -14,5 +14,12 @@ export class AgentExtractionError extends PipelineError {
   constructor(message: string, options?: { cause?: unknown }) {
     super("extraction", message, options);
     this.name = "AgentExtractionError";
+  }
+}
+
+export class OcrError extends PipelineError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("ocr", message, options);
+    this.name = "OcrError";
   }
 }

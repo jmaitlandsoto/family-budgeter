@@ -48,6 +48,7 @@ function chatEntry(kind: ChatEntry["kind"], text: string): ChatEntry {
 }
 
 const STAGE_LABEL: Record<string, string> = {
+  ocr: "OCR",
   extraction: "Extraction",
   categorization: "Categorization",
   verification: "Verification",

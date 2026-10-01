@@ -44,13 +44,20 @@ export interface TypeSafeStageUsage {
   outputTokens: number;
 }
 
+// Document AI's API reports pages processed, not a dollar cost, same reasoning
+// as TypeSafeStageUsage having no costUsd.
+export interface OcrStageUsage {
+  pages: number;
+}
+
 export interface PipelineUsage {
+  ocr: OcrStageUsage;
   extraction: AgentStageUsage;
   categorization: TypeSafeStageUsage;
   verification: TypeSafeStageUsage;
 }
 
-export type PipelineStage = "extraction" | "categorization" | "verification";
+export type PipelineStage = "ocr" | "extraction" | "categorization" | "verification";
 
 export type PendingTransaction = Transaction & { category: null };
 

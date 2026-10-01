@@ -30,6 +30,7 @@ export const config = {
   googleServiceAccountKeyRaw: process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
   googleServiceAccountKeyPath: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH,
   backendApiKey: required("BACKEND_API_KEY"),
+  documentAiProcessorName: required("DOCUMENT_AI_PROCESSOR_NAME"),
   port: Number(process.env.PORT ?? 8080),
 };
 

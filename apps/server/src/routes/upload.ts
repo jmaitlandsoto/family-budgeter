@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { aggregate } from "../pipeline/aggregate.js";
 import { categorizeTransactions } from "../pipeline/categorize.js";
-import { extractTransactions, type StatementFile } from "../pipeline/extractTransactions.js";
+import { extractTransactions } from "../pipeline/extractTransactions.js";
+import { runOcr, type StatementFile } from "../pipeline/ocr.js";
 import { verifyExtraction } from "../pipeline/verifyExtraction.js";
 import { PipelineError } from "../errors.js";
 import { createJob } from "../jobStore.js";
@@ -61,8 +62,12 @@ export async function registerUploadRoute(app: FastifyInstance): Promise<void> {
 }
 
 async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) => void): Promise<void> {
-  send({ type: "stage_start", stage: "extraction", message: "Reading bank statement PDFs…" });
-  const extraction = await extractTransactions(files, (text) => send({ type: "chat", text }));
+  send({ type: "stage_start", stage: "ocr", message: "Reading bank statement PDFs…" });
+  const ocr = await runOcr(files);
+  send({ type: "stage_complete", stage: "ocr" });
+
+  send({ type: "stage_start", stage: "extraction", message: "Extracting transactions…" });
+  const extraction = await extractTransactions(ocr.pages, (text) => send({ type: "chat", text }));
   send({ type: "stage_complete", stage: "extraction" });
 
   const { transactions, warnings: extractionWarnings } = extraction.result;
@@ -97,7 +102,7 @@ async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) 
   const result = aggregate(categorized);
   send({ type: "aggregate_update", result });
 
-  const warnings = [...extractionWarnings, ...verifyOutcome.warnings];
+  const warnings = [...ocr.warnings, ...extractionWarnings, ...verifyOutcome.warnings];
   const jobId = createJob(categorized, result);
   send({
     type: "done",
@@ -106,6 +111,7 @@ async function runPipeline(files: StatementFile[], send: (event: ProgressEvent) 
     result,
     warnings,
     usage: {
+      ocr: ocr.usage,
       extraction: extraction.usage,
       categorization: categorizeOutcome.usage,
       verification: verifyOutcome.usage,

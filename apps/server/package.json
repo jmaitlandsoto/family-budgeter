@@ -15,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.284",
     "@fastify/multipart": "^10.1.2",
+    "@google-cloud/documentai": "^10.1.1",
     "@typesafe-ai/sdk": "^0.6.0",
     "fastify": "^5.12.5",
     "googleapis": "^182.0.0",
